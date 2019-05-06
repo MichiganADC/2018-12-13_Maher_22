@@ -225,78 +225,14 @@ fields_u3_raw <-
     , fields_u3_a4_raw
     , fields_u3_b5_raw
     , fields_u3_b6_raw
+    , fields_u3_c2_raw
     , fields_u3_d1_raw
     , fields_u3_d2_raw
     , fields_u3_tb_raw
     , fields_u3_cg_raw
   )
-# rm(list = ls(pattern = "^fields_u3_.._raw$"))
-# 
-# fields_u3 <- fields_u3_raw %>% paste(collapse = ",")
-# 
-# forms_u3_raw <- c("ivp_c2", "fvp_c2")
-# 
-# forms_u3 <- forms_u3_raw %>% paste(collapse = ",")
-# 
-# json_u3 <-
-#   get_rc_data_api(uri    = REDCAP_API_URI,
-#                   token  = REDCAP_API_TOKEN_UDS3n,
-#                   fields = fields_u3,
-#                   forms  = forms_u3,
-#                   vp     = FALSE)
-# df_u3 <- jsonlite::fromJSON(json_u3) %>% as_tibble() %>% na_if("")
 
-# _ UDS 2 ----
-
-# # Get UDS 2 fields from MADC Data Unification translation dictionary
-# df_trans_dict <- 
-#   readxl::read_excel(paste0("~/Box Sync/Documents/MADC_Data_Unification/",
-#                             "WIP__translation_dictionary.xlsx"))
-# 
-# # Keep only the rows of the trans dict that appear in our current UDS 3 fields
-# df_trans_dict_flt <- df_trans_dict %>% 
-#   filter(field_u3n %in% fields_u3_raw)
-# 
-# # Pull a vector of non-NA UDS 2 fields
-# fields_u2_raw <- df_trans_dict_flt %>% 
-#   filter(!is.na(field_u2)) %>% 
-#   pull(field_u2)
-# 
-# # Append AD and Parkinson's diagnosis fields
-# fields_u2_raw <-
-#   c(
-#     fields_u2_raw
-#     , "probad"
-#     , "probadif"
-#     , "park"
-#     , "parkif"
-#   )
-# 
-# fields_u2 <- fields_u2_raw %>% paste(collapse = ",")
-# 
-# json_u2 <-
-#   get_rc_data_api(uri    = REDCAP_API_URI,
-#                   token  = REDCAP_API_TOKEN_UDS2,
-#                   fields = fields_u2,
-#                   vp     = FALSE)
-# df_u2 <- jsonlite::fromJSON(json_u2) %>% as_tibble() %>% na_if("")
-# 
-# # Rename fields of df_u2 to match corresponding fields of df_u3
-# names_df_u2 <- names(df_u2)
-# 
-# names(df_u2) <-
-#   purrr::map_chr(names_df_u2,
-#                  function(x) {
-#                    u3n_name <- df_trans_dict_flt %>% 
-#                      filter(field_u2 == x) %>% 
-#                      pull(field_u3n) 
-#                    if (length(u3n_name) > 0) {
-#                      return(u3n_name)
-#                    } else {
-#                      return(x)
-#                    }
-#                  })
-
+# Add UDS 2 fields not already covered by UDS 3 fields
 fields_u3_u2_raw <- 
   c(
     fields_u3_raw
@@ -331,6 +267,7 @@ fields_ms_dm_raw <-
     , "race_value"
     , "ed_level"
     , "handedness"
+    , "birth_date"
   )
 
 fields_ms_raw <- 
@@ -345,9 +282,11 @@ json_ms <-
                   token  = REDCAP_API_TOKEN_MINDSET,
                   fields = fields_ms,
                   filterLogic = paste0("(",
-                                       "[subject_id] >= 'UM00000543' AND ", 
-                                       "[subject_id] <= 'UM00009999' AND ",
-                                       "[exam_date]  >= '2017-03-01'",
+                                       "[subject_id] >= 'UM00000000'",
+                                       " AND ",
+                                       "[subject_id] <= 'UM00009999'",
+                                       # " AND ",
+                                       # "[exam_date]  >= '2017-03-01'",
                                        ")"
                   ),
                   vp     = FALSE
@@ -359,18 +298,6 @@ df_ms <- jsonlite::fromJSON(json_ms) %>% as_tibble() %>% na_if("")
 
 # _ Clean Data ----
 
-# # UDS 3
-# df_u3_cln <- df_u3 %>% 
-#   # Deselect useless field(s)
-#   select(-redcap_event_name
-#          , -starts_with("instructions_")
-#          , -ends_with("_complete")) %>% 
-#   # Keep only merged records
-#   filter(str_detect(ptid, "^UM\\d{8}$")) %>% 
-#   # Clean out records missing `form_date`s
-#   filter(!is.na(form_date))
-# # write_csv(df_u3_cln, "df_u3_cln.csv", na = "")
-
 # UDS X
 df_ux_cln <- df_ux %>% 
   # Deselect useless field(s)
@@ -379,7 +306,9 @@ df_ux_cln <- df_ux %>%
   # Keep only merged records
   filter(str_detect(ptid, "^UM\\d{8}$")) %>% 
   # Clean out records missing `form_date`s
-  filter(!is.na(form_date))
+  filter(!is.na(form_date)) %>% 
+  # Coerce `dob` to date class
+  mutate(dob = as.Date(dob))
 write_csv(df_ux_cln, "df_ux_cln.csv", na = "")
 
 # MiNDSet Registry
@@ -389,29 +318,12 @@ df_ms_cln <- df_ms %>%
   select(-redcap_event_name) %>% 
   # Coerce fields to appropriate types
   mutate(educ_ms = as.integer(ed_level)) %>% 
-  select(-ed_level)
+  # Coerce `birth_date` to date class
+  mutate(dob_ms = as.Date(birth_date)) %>% 
+  select(-ed_level, -birth_date)
+write_csv(df_ms_cln, "df_ms_cln.csv", na = "")
 
 # _ Mutate Data ----
-
-# # UDS 3
-# dx_vars <- fields_u3_d1_raw %>% 
-#   str_replace_all("fu_|tele_", NA_character_) %>% 
-#   stringi::stri_remove_empty_na()
-# 
-# rel_fields <- names(df_u3_cln) %>% 
-#   str_replace_all("ptid|form_date|dob", NA_character_) %>% 
-#   stringi::stri_remove_empty_na()
-# 
-# df_u3_cln_mut <- df_u3_cln %>%
-#   # Get rid of records without any relevant data (likely milestoned pts)
-#   get_nonempty_records(rel_fields) %>% 
-#   # Coalesce initial/follow-up/telephone visits
-#   coalesce_ift_cols() %>% 
-#   # Coerce dx vars to integer
-#   mutate_at(vars(dx_vars), as.integer) %>% 
-#   # Derive MADC Consensus Dx
-#   derive_consensus_dx()
-# # write_csv(df_u3_cln_mut, "df_u3_cln_mut.csv", na = "")
 
 # UDS X
 dx_vars <- fields_u3_d1_raw %>%
@@ -464,8 +376,8 @@ df_ms_cln_mut <- df_ms_cln %>%
     handedness___3 == 1 ~ 3L, # A
     TRUE ~ NA_integer_
   )) %>% 
-  select(-handedness___1, -handedness___2, -handedness___3)
-# write_csv(df_ms_cln_mut, "df_ms_cln_mut.csv", na = "")
+  select(-handedness___1, -handedness___2, -handedness___3) 
+write_csv(df_ms_cln_mut, "df_ms_cln_mut.csv", na = "")
 
 # Spackle in missing demographic data
 df_ux_ms <- 
@@ -475,16 +387,13 @@ df_ux_ms <-
                  starts_with("educ"),
                  starts_with("handed")),
             as.integer) %>% 
+  mutate_at(vars(starts_with("dob")),
+            as.Date) %>% 
   mutate(race   = coalesce(race, race_ms),
          educ   = coalesce(educ, educ_ms),
-         handed = coalesce(handed, handed_ms)) %>% 
-  select(-race_ms, -educ_ms, -handed_ms)
-
-####
-## HERE FIX DIFFERENT FORMATS IN `dob` field
-##   UDS 2 : mm/dd/yyyy
-##   UDS 3 : yyyy-mm-dd
-####
+         handed = coalesce(handed, handed_ms),
+         dob    = coalesce(dob, dob_ms)) %>% 
+  select(-race_ms, -educ_ms, -handed_ms, -dob_ms)
 
 # Mutates
 df_ux_ms_mut <- df_ux_ms %>% 
@@ -508,25 +417,28 @@ df_ux_ms_mut_flt <- df_ux_ms_mut %>%
 write_csv(df_ux_ms_mut_flt, "df_ux_ms_mut_flt.csv", na = "")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+#  @##==---==##@##==---==##@    EXTRA  :  SPACE    @##==---==##@##==---==##@  #
+#@##==---==##@   @##==---==##@    #==-- --==#    @##==---==##@   @##==---==##@#
+##==---==##@   #   @##==---==##@    #==-==#    @##==---==##@   #   @##==---==##
+#=---==##@    #=#    @##==---==##@    #=#    @##==---==##@    #=#    @##==---=#
+#--==##@    #==-==#    @##==---==##@   #   @##==---==##@    #==-==#    @##==--#
+#==##@    #==-- --==#    @##==---==##@   @##==---==##@    #==-- --==#    @##==#
+###@    #==--  :  --==#    @##==---==##@##==---==##@    #==--  :  --==#    @###
